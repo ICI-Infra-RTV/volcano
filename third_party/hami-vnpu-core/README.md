@@ -1,93 +1,76 @@
-# hami-vnpu-core
+# HAMi-vnpu-core —— Hook library for Ascend NPU
+## Introduction
+HAMi-vnpu-core is the in-container resource controller for Ascend NPU, written in Rust language.
 
 
+## Features
 
-## Getting started
+HAMi-vnpu-core has the following features:
+1. Virtualize device meory
+2. Limit npu utilization by time shard
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
+## Components
+- **Limiter (Manager)**: Each Pod runs a dedicated `limiter` instance. Its primary responsibility is to enforce the **Total Memory Quota** and **Compute Utilization** for all processes within that specific Pod.
+- **libvnpu.so (Interceptor)**: A dynamic library (`.so`) that intercepts NPU RTS API calls from AI frameworks to enforce constraints.
 
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
 
-## Add your files
+## Prerequisites
+- **NPU**: Ascend 910B.
+- **Shared Region**: A host directory for coordination between pods (e.g., `/tmp/hami-shared-region`).
+- **Toolchain**: Docker & Rust installed.
 
-- [ ] [Create](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#create-a-file) or [upload](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#upload-a-file) files
-- [ ] [Add files using the command line](https://docs.gitlab.com/ee/gitlab-basics/add-file.html#add-a-file-using-the-command-line) or push an existing Git repository with the following command:
+Please follow the instructions on the official Rust website to install rust:
+**[https://rust-lang.org/tools/install/](https://rust-lang.org/tools/install/)**
 
+## Build
+Use `cargo` to build inside a environment with CANN installed.
+```bash
+cd hami-vnpu-core
+cargo build
+# build in release mode: cargo build --release
 ```
-cd existing_repo
-git remote add origin https://rnd-gitlab-ca-g.huawei.com/ici/llm/inference-runtime/hami-vnpu-core.git
-git branch -M main
-git push -uf origin main
+
+Artifacts Location:
+- target/debug/**limiter**: The Per-Pod daemon process binary.
+- target/debug/**libvnpu.so**: The Interceptor library.
+
+## Deployment
+### Host Environment preparation
+Before launching any containers, the **Global Shared Memory (SHM) Region** must be initialized on the host to allow inter-Pod coordination.
+Create the Shared Directory:
+```
+sudo mkdir -p /tmp/hami-shared-region
+sudo chmod 777 /tmp/hami-shared-region
+```
+### Container Deployment
+#### Step 1. Start Container
+- When starting the container, you must map the following:
+SHM Volume: Map the host's shared region (e.g.`/tmp/hami-shared-region`) to a container path (e.g., `/hami-shared-region`).
+- Map `limiter` and `libvnpu.so` into container.
+- `--privileged` is required for Ascend NPUs to be shared between containers when start docker containers.
+
+#### Step 2. Set Environment Variables:
+- **NPU_GLOBAL_SHM_PATH**: Define a unique filename within the **shared region**.
+> Note: You do NOT need to create this file manually; the `limiter` handles file creation and initialization. However, the path must be identical across all Pods to allow coordination.
+
+- **NPU_MEM_QUOTA**: Memory limit for the specific Pod (in MB).
+
+- **NPU_PRIORITY**: Set the scheduling priority (e.g., 20).
+
+```bash
+export NPU_GLOBAL_SHM_PATH="/hami-shared-region/global_registry"
+export NPU_MEM_QUOTA=10240 # 10GB HBM
+export NPU_PRIORITY=20 # use half of computing power than another one with priority 40
 ```
 
-## Integrate with your tools
+#### Step 3. Launching the Limiter:
+Inside each container, the `limiter` process must start first as a background process.
+```
+./target/debug/limiter > limiter.log 2>&1 &
+```
 
-- [ ] [Set up project integrations](https://rnd-gitlab-ca-g.huawei.com/ici/llm/inference-runtime/hami-vnpu-core/-/settings/integrations)
-
-## Collaborate with your team
-
-- [ ] [Invite team members and collaborators](https://docs.gitlab.com/ee/user/project/members/)
-- [ ] [Create a new merge request](https://docs.gitlab.com/ee/user/project/merge_requests/creating_merge_requests.html)
-- [ ] [Automatically close issues from merge requests](https://docs.gitlab.com/ee/user/project/issues/managing_issues.html#closing-issues-automatically)
-- [ ] [Enable merge request approvals](https://docs.gitlab.com/ee/user/project/merge_requests/approvals/)
-- [ ] [Set auto-merge](https://docs.gitlab.com/ee/user/project/merge_requests/merge_when_pipeline_succeeds.html)
-
-## Test and Deploy
-
-Use the built-in continuous integration in GitLab.
-
-- [ ] [Get started with GitLab CI/CD](https://docs.gitlab.com/ee/ci/quick_start/index.html)
-- [ ] [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/ee/user/application_security/sast/)
-- [ ] [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/ee/topics/autodevops/requirements.html)
-- [ ] [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/ee/user/clusters/agent/)
-- [ ] [Set up protected environments](https://docs.gitlab.com/ee/ci/environments/protected_environments.html)
-
-***
-
-# Editing this README
-
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
-
-## Suggestions for a good README
-
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
-
-## Name
-Choose a self-explaining name for your project.
-
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
-
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
-
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
-
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
-
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
-
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
-
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
-
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
-
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
-
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
-
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
-
-## License
-For open source projects, say how it is licensed.
-
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+#### Step 4. Launching the AI App:
+The AI application must be launched with the `LD_PRELOAD` environment variable pointing to the `libvnpu.so` library. This forces the app to route NPU calls through the local Limiter.
+```
+LD_PRELOAD=./target/debug/libvnpu.so python3 your_model.py
+```
